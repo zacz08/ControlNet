@@ -1,9 +1,9 @@
-from tutorial_dataset import MyDataset
+from tutorial_dataset_bev import MyDataset
 
 dataset = MyDataset()
 print(len(dataset))
 
-item = dataset[1234]
+item = dataset[5]
 jpg = item['jpg']
 txt = item['txt']
 hint = item['hint']

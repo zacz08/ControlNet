@@ -1,5 +1,7 @@
 .idea/
 
+data/
+
 training/
 lightning_logs/
 image_log/
