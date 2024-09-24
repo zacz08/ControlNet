@@ -145,20 +145,20 @@ class ControlNet(nn.Module):
         self.zero_convs = nn.ModuleList([self.make_zero_conv(model_channels)])
 
         self.input_hint_block = TimestepEmbedSequential(
-            conv_nd(dims, hint_channels, 16, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 16, 16, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 16, 32, 3, padding=1, stride=2),
-            nn.SiLU(),
-            conv_nd(dims, 32, 32, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 32, 96, 3, padding=1, stride=2),
-            nn.SiLU(),
-            conv_nd(dims, 96, 96, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 96, 256, 3, padding=1, stride=2),
-            nn.SiLU(),
+            # conv_nd(dims, hint_channels, 16, 3, padding=1),
+            # nn.SiLU(),
+            # conv_nd(dims, 16, 16, 3, padding=1),
+            # nn.SiLU(),
+            # conv_nd(dims, 16, 32, 3, padding=1, stride=2),
+            # nn.SiLU(),
+            # conv_nd(dims, 32, 32, 3, padding=1),
+            # nn.SiLU(),
+            # conv_nd(dims, 32, 96, 3, padding=1, stride=2),
+            # nn.SiLU(),
+            # conv_nd(dims, 96, 96, 3, padding=1),
+            # nn.SiLU(),
+            # conv_nd(dims, 96, 256, 3, padding=1, stride=2),
+            # nn.SiLU(),
             zero_module(conv_nd(dims, 256, model_channels, 3, padding=1))
         )
 
