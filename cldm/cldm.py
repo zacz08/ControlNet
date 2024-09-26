@@ -38,6 +38,13 @@ class ControlledUnetModel(UNetModel):
             if only_mid_control or control is None:
                 h = torch.cat([h, hs.pop()], dim=1)
             else:
+                # if h.size(2) != hs[-1].size(2) or h.size(3) != hs[-1].size(3):
+                #     hs[-1] = nn.functional.interpolate(hs[-1], size=(h.size(2), h.size(3)))
+                # if h.size(2) != control[-1].size(2) or h.size(3) != control[-1].size(3):
+                #     control[-1] = nn.functional.interpolate(control[-1], size=(h.size(2), h.size(3)))
+                # print(f"h size: {h.size()}")
+                # print(f"hs.pop() size: {hs[-1].size()}")  # 这里是 hs.pop() 的尺寸
+                # print(f"control.pop() size: {control[-1].size()}")  # 这里是 control.pop() 的尺寸
                 h = torch.cat([h, hs.pop() + control.pop()], dim=1)
             h = module(h, emb, context)
 
@@ -144,21 +151,30 @@ class ControlNet(nn.Module):
         )
         self.zero_convs = nn.ModuleList([self.make_zero_conv(model_channels)])
 
+        bev_feat_channels = 256
+        self.init_input_hint_block = TimestepEmbedSequential(
+            conv_nd(dims, bev_feat_channels, 256, 3, padding=1, stride=2),
+            nn.SiLU(),
+            zero_module(conv_nd(dims, 256, model_channels, 3, padding=1))
+        )
+        
+        self.guided_hint_init = False
+
         self.input_hint_block = TimestepEmbedSequential(
-            # conv_nd(dims, hint_channels, 16, 3, padding=1),
-            # nn.SiLU(),
-            # conv_nd(dims, 16, 16, 3, padding=1),
-            # nn.SiLU(),
-            # conv_nd(dims, 16, 32, 3, padding=1, stride=2),
-            # nn.SiLU(),
-            # conv_nd(dims, 32, 32, 3, padding=1),
-            # nn.SiLU(),
-            # conv_nd(dims, 32, 96, 3, padding=1, stride=2),
-            # nn.SiLU(),
-            # conv_nd(dims, 96, 96, 3, padding=1),
-            # nn.SiLU(),
-            # conv_nd(dims, 96, 256, 3, padding=1, stride=2),
-            # nn.SiLU(),
+            conv_nd(dims, hint_channels, 16, 3, padding=1),
+            nn.SiLU(),
+            conv_nd(dims, 16, 16, 3, padding=1),
+            nn.SiLU(),
+            conv_nd(dims, 16, 32, 3, padding=1, stride=2),
+            nn.SiLU(),
+            conv_nd(dims, 32, 32, 3, padding=1),
+            nn.SiLU(),
+            conv_nd(dims, 32, 96, 3, padding=1, stride=2),
+            nn.SiLU(),
+            conv_nd(dims, 96, 96, 3, padding=1),
+            nn.SiLU(),
+            conv_nd(dims, 96, 256, 3, padding=1, stride=2),
+            nn.SiLU(),
             zero_module(conv_nd(dims, 256, model_channels, 3, padding=1))
         )
 
@@ -285,14 +301,22 @@ class ControlNet(nn.Module):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
 
-        guided_hint = self.input_hint_block(hint, emb, context)
+        if not self.guided_hint_init:
+            guided_hint = self.init_input_hint_block(hint, emb, context)     # target size: ([1, 320, 64, 64])
+            self.guided_hint_init = True
+            print("first guided_hint size:", guided_hint.size())
+        else:
+            guided_hint = self.input_hint_block(hint, emb, context)     # ([2, 320, 64, 64])
+            print("guided_hint size:", guided_hint.size())
 
         outs = []
 
-        h = x.type(self.dtype)
+        h = x.type(self.dtype)      # ([2, 4, 16, 16])
+        print("h size 1:", h.size())
         for module, zero_conv in zip(self.input_blocks, self.zero_convs):
             if guided_hint is not None:
-                h = module(h, emb, context)
+                h = module(h, emb, context)     # ([2, 320, 16, 16])
+                print("h size 2:", h.size())
                 h += guided_hint
                 guided_hint = None
             else:
