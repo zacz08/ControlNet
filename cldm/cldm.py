@@ -152,30 +152,11 @@ class ControlNet(nn.Module):
         self.zero_convs = nn.ModuleList([self.make_zero_conv(model_channels)])
 
         bev_feat_channels = 256
-        self.init_input_hint_block = TimestepEmbedSequential(
-            conv_nd(dims, bev_feat_channels, 256, 3, padding=1, stride=2),
-            nn.SiLU(),
-            zero_module(conv_nd(dims, 256, model_channels, 3, padding=1))
-        )
-        
-        self.guided_hint_init = False
 
         self.input_hint_block = TimestepEmbedSequential(
-            conv_nd(dims, hint_channels, 16, 3, padding=1),
+            conv_nd(dims, bev_feat_channels, model_channels, 3, padding=1, stride=2),
             nn.SiLU(),
-            conv_nd(dims, 16, 16, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 16, 32, 3, padding=1, stride=2),
-            nn.SiLU(),
-            conv_nd(dims, 32, 32, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 32, 96, 3, padding=1, stride=2),
-            nn.SiLU(),
-            conv_nd(dims, 96, 96, 3, padding=1),
-            nn.SiLU(),
-            conv_nd(dims, 96, 256, 3, padding=1, stride=2),
-            nn.SiLU(),
-            zero_module(conv_nd(dims, 256, model_channels, 3, padding=1))
+            zero_module(conv_nd(dims, model_channels, model_channels, 3, padding=1))
         )
 
         self._feature_size = model_channels
@@ -301,22 +282,13 @@ class ControlNet(nn.Module):
         t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
         emb = self.time_embed(t_emb)
 
-        if not self.guided_hint_init:
-            guided_hint = self.init_input_hint_block(hint, emb, context)     # target size: ([1, 320, 64, 64])
-            self.guided_hint_init = True
-            print("first guided_hint size:", guided_hint.size())
-        else:
-            guided_hint = self.input_hint_block(hint, emb, context)     # ([2, 320, 64, 64])
-            print("guided_hint size:", guided_hint.size())
-
+        guided_hint = self.input_hint_block(hint, emb, context)
         outs = []
 
-        h = x.type(self.dtype)      # ([2, 4, 16, 16])
-        print("h size 1:", h.size())
+        h = x.type(self.dtype)      # ([2, 4, 64, 64])
         for module, zero_conv in zip(self.input_blocks, self.zero_convs):
             if guided_hint is not None:
-                h = module(h, emb, context)     # ([2, 320, 16, 16])
-                print("h size 2:", h.size())
+                h = module(h, emb, context)     # ([2, 320, 64, 64])
                 h += guided_hint
                 guided_hint = None
             else:
@@ -382,8 +354,8 @@ class ControlLDM(LatentDiffusion):
         N = min(z.shape[0], N)
         n_row = min(z.shape[0], n_row)
         log["reconstruction"] = self.decode_first_stage(z)
-        log["control"] = c_cat * 2.0 - 1.0
-        log["conditioning"] = log_txt_as_img((512, 512), batch[self.cond_stage_key], size=16)
+        # log["control"] = c_cat * 2.0 - 1.0
+        # log["conditioning"] = log_txt_as_img((512, 512), batch[self.cond_stage_key], size=16)
 
         if plot_diffusion_rows:
             # get diffusion row
@@ -433,7 +405,7 @@ class ControlLDM(LatentDiffusion):
     def sample_log(self, cond, batch_size, ddim, ddim_steps, **kwargs):
         ddim_sampler = DDIMSampler(self)
         b, c, h, w = cond["c_concat"][0].shape
-        shape = (self.channels, h // 8, w // 8)
+        shape = (self.channels, h // 2, w // 2)         # adjust according to control size (h,w-> 64,64)
         samples, intermediates = ddim_sampler.sample(ddim_steps, batch_size, shape, cond, verbose=False, **kwargs)
         return samples, intermediates
 
