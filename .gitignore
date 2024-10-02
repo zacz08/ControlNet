@@ -5,6 +5,7 @@ data/
 training/
 lightning_logs/
 image_log/
+inference_result*/
 
 *.pth
 *.pt
