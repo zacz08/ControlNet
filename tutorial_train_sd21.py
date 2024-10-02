@@ -26,7 +26,7 @@ model.only_mid_control = only_mid_control
 
 # Misc
 dataset = MyDataset()
-dataloader = DataLoader(dataset, num_workers=0, batch_size=batch_size, shuffle=True)
+dataloader = DataLoader(dataset, num_workers=0, batch_size=batch_size, shuffle=False)
 logger = ImageLogger(batch_frequency=logger_freq)
 # trainer = pl.Trainer(gpus=1, precision=32, callbacks=[logger])
 trainer = pl.Trainer(strategy="ddp", accelerator="gpu", gpus=2, precision=32, callbacks=[logger])
