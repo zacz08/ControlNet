@@ -1,6 +1,8 @@
 from share import *
 import config
-
+import json
+import os
+import matplotlib.pyplot as plt
 import cv2
 import einops
 import gradio as gr
@@ -11,12 +13,11 @@ from PIL import Image
 
 from pytorch_lightning import seed_everything
 from annotator.util import resize_image, HWC3
-from annotator.canny import CannyDetector
 from cldm.model import create_model, load_state_dict
 from cldm.ddim_hacked import DDIMSampler
+from tutorial_dataset_bev import MyDataset
+from torch.utils.data import DataLoader
 
-
-apply_canny = CannyDetector()
 
 model = create_model('/home/zc/Diffusion/src/config/cldm_v21.yaml').cpu()
 model.load_state_dict(load_state_dict('/home/zc/Downloads/epoch=98-step=7028.ckpt', location='cuda'))
@@ -24,78 +25,94 @@ model = model.cuda()
 # model = model.half()
 ddim_sampler = DDIMSampler(model)
 
+# Misc
+dataset = MyDataset(data_split='test')
+dataloader = DataLoader(dataset, num_workers=0, batch_size=5, shuffle=False)
 
-def process(input_image, prompt, a_prompt, n_prompt, 
-            num_samples, image_resolution, ddim_steps, 
-            guess_mode, strength, scale, seed, eta):
+
+def process(bev_feat, prompt, a_prompt, n_prompt, 
+            num_samples, ddim_steps, guess_mode, 
+            strength, scale, seed, eta):
     with torch.no_grad():
-        # img = resize_image(HWC3(input_image), image_resolution)
         # H, W, C = img.shape
         H, W = 128, 128
-
-        # detected_map = apply_canny(img, low_threshold, high_threshold)
-        # detected_map = HWC3(detected_map)
-
-        # control = torch.from_numpy(detected_map.copy()).float().cuda() / 255.0
-        # control = torch.stack([control for _ in range(num_samples)], dim=0)
-        # control = einops.rearrange(control, 'b h w c -> b c h w').clone()
-        control = torch.load('/home/zc/ControlNet/data/nuscenes/bev_feature/test/00000_bev_f218a2b4fa6941f7ac3798adc72126e8.pt')
-        control = control.float()
-
         if seed == -1:
             seed = random.randint(0, 65535)
         seed_everything(seed)
 
-        if config.save_memory:
-            model.low_vram_shift(is_diffusing=False)
-
-        cond = {"c_concat": [control], "c_crossattn": [model.get_learned_conditioning([prompt + ', ' + a_prompt] * num_samples)]}
-        un_cond = {"c_concat": None if guess_mode else [control], "c_crossattn": [model.get_learned_conditioning([n_prompt] * num_samples)]}
+        cond = {"c_concat": [bev_feat], "c_crossattn": [model.get_learned_conditioning(prompt)]}
+        un_cond = {"c_concat": [bev_feat], "c_crossattn": [model.get_learned_conditioning([n_prompt] * num_samples)]}
         shape = (4, H // 2, W // 2)
 
-        if config.save_memory:
-            model.low_vram_shift(is_diffusing=True)
 
-        model.control_scales = [strength * (0.825 ** float(12 - i)) for i in range(13)] if guess_mode else ([strength] * 13)  # Magic number. IDK why. Perhaps because 0.825**12<0.01 but 0.826**12>0.01
+        model.control_scales = [strength] * 13
         samples, intermediates = ddim_sampler.sample(ddim_steps, num_samples,
                                                      shape, cond, verbose=False, eta=eta,
                                                      unconditional_guidance_scale=scale,
                                                      unconditional_conditioning=un_cond)
 
-        if config.save_memory:
-            model.low_vram_shift(is_diffusing=False)
 
         x_samples = model.decode_first_stage(samples)
         x_samples = (einops.rearrange(x_samples, 'b c h w -> b h w c') * 127.5 + 127.5).cpu().numpy().clip(0, 255).astype(np.uint8)
 
         results = [x_samples[i] for i in range(num_samples)]
     # return [255 - detected_map] + results
-    return results[0]
+    return results
+
+
+def combine_img(gt_tensor, pred_imgs):
+
+    # Restore gt bev images from tensor
+    gt_imgs = []
+    for i in range(gt_tensor.size(0)):  # 遍历batch
+        gt_img = gt_tensor[i].numpy()  # 将torch tensor转换为numpy数组
+        gt_img = ((gt_img + 1.0) * 127.5).astype(np.uint8)
+        gt_imgs.append(gt_img)
+
+    combined_images = []
+    gap_size=10
+    height, width, channels = 512, 512, 3
+    
+    for gt, pred in zip(gt_imgs, pred_imgs):
+        # 上下拼接 GT 和预测图片，并加上中间的垂直空隙
+        combined = np.vstack((gt, np.ones((gap_size, width, channels), dtype=np.uint8) * 255, pred))
+        combined_images.append(combined)
+
+    return combined_images
+
 
 def main():
-    img = process(
-        input_image = Image.open('/home/zc/ControlNet/test_imgs/dog.png'),
-        prompt = "bird's-eye-view semantic segmentation map",
-        a_prompt = '',
-        n_prompt = '',
-        num_samples = 1,
-        image_resolution = 256,
-        ddim_steps = 20,
-        guess_mode = False,
-        strength = 1,
-        scale = 9.0,
-        seed = -1,
-        eta = 0.0,
-    )
+    out_folder = "inference_result_sd_lock"
+    if not os.path.exists(out_folder):
+            os.makedirs(out_folder)
 
-    # idx = 0
-    # for img in imgs:
-    #     output_image_path = f"./image_log/{idx:03d}_bev_prediction.jpg"
-    #     img.save(output_image_path)
-    #     idx += 1
-    output_image_path = f"./image_log/bev_prediction.jpg"
-    image = Image.fromarray(img)
-    image.save(output_image_path)
+    idx = 0
+    for i, data in enumerate(dataloader):
+        # source = data['hint']
+        source = einops.rearrange(data['hint'], 'b h w c-> b c h w')
+        source = source.float()
+        target = data['jpg']
+        prompt = data['txt']
+
+        pred_img_list = process(
+                bev_feat = source,
+                prompt = prompt,
+                a_prompt = '',
+                n_prompt = '',
+                num_samples = 5,
+                ddim_steps = 20,
+                guess_mode = False,
+                strength = 1,
+                scale = 9.0,
+                seed = -1,
+                eta = 0.0,
+            )
+        result_img = combine_img(target, pred_img_list)
+        for img in result_img:
+            save_path = os.path.join(out_folder, f"{idx:04d}.jpg")
+            # img.save(save_path)
+            cv2.imwrite(save_path, img)
+            idx += 1
 
 
 if __name__=="__main__":
