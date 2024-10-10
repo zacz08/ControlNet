@@ -2,6 +2,7 @@ import json
 import cv2
 import torch
 import numpy as np
+import os
 
 from torch.utils.data import Dataset
 import torchvision.transforms as transforms
@@ -10,9 +11,14 @@ import torchvision.transforms as transforms
 
 
 class MyDataset(Dataset):
-    def __init__(self):
+    def __init__(self, data_split):
+
+        self.data_split = data_split
+        assert data_split in ['train','val','test','train_mini','val_mini'], \
+            f"Invalid data_split: {self.data_split}"
+        json_file = "./data/nuscenes/prompt_" + self.data_split + ".json"
         self.data = []
-        with open('./data/nuscenes/prompt.json', 'rt') as f:
+        with open(json_file, 'rt') as f:
             for line in f:
                 self.data.append(json.loads(line))
         self.vae_scale = 8
@@ -27,8 +33,10 @@ class MyDataset(Dataset):
         target_filename = item['target']
         prompt = item['prompt']
 
-        source = torch.load('./data/nuscenes/bev_feature/' + source_filename)
-        target = cv2.imread('./data/nuscenes/bev_seg_gt/' + target_filename)
+        source = torch.load('./data/nuscenes/bev_feature/' + 
+                            self.data_split + '/' + source_filename)
+        target = cv2.imread('./data/nuscenes/bev_seg_gt/' + 
+                            self.data_split + '/' + target_filename)
         # target = cv2.resize(target, (1000, 1000))
 
         # Do not forget that OpenCV read images in BGR order.
